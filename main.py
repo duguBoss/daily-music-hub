@@ -4,13 +4,9 @@ import time
 import shutil
 import random
 import requests
-import urllib3
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from io import BytesIO
-
-# 忽略 SSL 警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================= 配置区 =================
 TOP_GIF = "https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzXgUR7FJnf11qGIo8nmKt6RxibXrb5s4RFb9UZ9UOHQy7fqQyI377Licw/0?wx_fmt=gif"
@@ -18,12 +14,7 @@ BOTTOM_GIF = "https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBr
 
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY", "your_username/your_repo")
 BRANCH = "main"
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # 从环境变量读取 Gemini Key
-
-# 请求头，防止网易云/其他图床拦截
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ================= 1. 每周清空机制 =================
 def clean_weekly():
@@ -33,33 +24,35 @@ def clean_weekly():
             print("今天是周一，已清空历史数据。")
     os.makedirs("outputs/images", exist_ok=True)
 
-# ================= 2. 获取音乐数据 =================
+# ================= 2. 获取 Deezer 音乐数据 (免授权/超稳定/无防盗链) =================
 def get_music_data():
     try:
-        # 添加 verify=False 解决证书过期问题
-        res = requests.get("https://api.uomg.com/api/rand.music?sort=热歌榜&format=json", headers=HEADERS, verify=False, timeout=10).json()
-        if res.get("code") == 1:
-            data = res["data"]
+        # 获取榜单前 50 首，每日随机挑一首，保持新鲜感
+        res = requests.get("https://api.deezer.com/chart/0/tracks?limit=50", timeout=10).json()
+        if "data" in res and len(res["data"]) > 0:
+            track = random.choice(res["data"])
             return {
-                "name": data["name"],
-                "artist": data["artistsname"],
-                "picUrl": data["picurl"],
+                "name": track["title"],
+                "artist": track["artist"]["name"],
+                "picUrl": track["album"]["cover_xl"]  # 直接拿 1000x1000 超清大图！
             }
     except Exception as e:
-        print(f"音乐API请求失败: {e}")
+        print(f"Deezer API 请求失败: {e}")
         
-    # 如果全失败，使用保底数据 (修复了更稳定的图片链接)
+    # 保底国际热歌数据
+    print("使用保底音乐数据...")
     return {
-        "name": "海底",
-        "artist": "一支榴莲",
-        "picUrl": "https://p2.music.126.net/rINn3QJkH7nK_1r3K2k9VQ==/109951164803767222.jpg?param=800y800"
+        "name": "Shape of You",
+        "artist": "Ed Sheeran",
+        # Deezer 官方永久直链图
+        "picUrl": "https://e-cdns-images.dzcdn.net/images/cover/f420e6e73715c0d291afb434407b4618/1000x1000-000000-80-0-0.jpg"
     }
 
 # ================= 3. 调用 Gemini 生成文案 =================
 def generate_content_with_gemini(song, artist):
     if not GEMINI_API_KEY:
         print("未检测到 GEMINI_API_KEY，使用备用文案。")
-        return f"今日分享 | 治愈神曲《{song}》", f"有些歌，听的是旋律；有些歌，听的是自己。这首《{song}》里的故事，你听懂了吗？"
+        return f"今日分享 | 治愈神曲《{song}》", f"有些歌，听的是旋律；有些歌，听的是自己。这首来自 {artist} 的《{song}》，你听懂了吗？"
 
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
     headers = {
@@ -67,64 +60,61 @@ def generate_content_with_gemini(song, artist):
         "Content-Type": "application/json"
     }
     
-    # 精心设计的 Prompt，要求 Gemini 返回 JSON 格式
     prompt = f"""
-    请为微信公众号写一段关于歌曲《{song}》（歌手：{artist}）的分享文案。
+    请为微信公众号写一段关于欧美/国际流行歌曲《{song}》（歌手：{artist}）的分享文案。
     要求：
-    1. 包含一个吸引人的公众号文章标题（带有情绪价值或治愈感）。
-    2. 包含一段约80字左右的走心、治愈或emo的听后感正文。
+    1. 包含一个吸引人的公众号文章标题（带有高级感或治愈感）。
+    2. 包含一段约80字左右的正文，描述这首歌的听感（比如节奏感、慵懒、治愈或emo）。
     3. 严格按以下JSON格式返回，不要带有任何Markdown代码块(```json)标记：
     {{"title": "你的标题", "content": "你的正文"}}
     """
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=20)
         result = response.json()
         text = result["candidates"][0]["content"]["parts"][0]["text"]
         
-        # 清理可能存在的 markdown 标记
         text = text.strip().strip("`").removeprefix("json").strip()
         data = json.loads(text)
-        
-        return data.get("title", f"今日分享 | 《{song}》"), data.get("content", "耳机一戴，谁也不爱。")
+        return data.get("title", f"今日欧美推歌 | 《{song}》"), data.get("content", "耳机一戴，进入属于你自己的世界。")
     except Exception as e:
         print(f"Gemini API 调用失败: {e}")
-        return f"今日推歌 | 《{song}》", "这首歌的前奏一响，瞬间就被拉回了那个特别的时刻。"
+        return f"今日推歌 | 《{song}》", f"按下播放键，感受 {artist} 带来的极致听觉享受。"
 
-# ================= 4. 生成封面图片 =================
+# ================= 4. 生成封面图片 (适配 1000x1000 高清图) =================
 def generate_cover(music):
     width, height = 900, 1200
     date_str = datetime.now().strftime("%Y-%m-%d")
     img_filename = f"{date_str}.jpg"
     img_path = f"outputs/images/{img_filename}"
 
-    # 下载图片 (添加 Headers 防止 403 拦截)
     try:
-        response = requests.get(music['picUrl'], headers=HEADERS, timeout=10)
-        response.raise_for_status() # 如果是 403, 404 等会直接报错跳入 except
+        # Deezer 没有防盗链，直接下！
+        response = requests.get(music['picUrl'], timeout=15)
+        response.raise_for_status() 
         cover_img = Image.open(BytesIO(response.content)).convert("RGB")
     except Exception as e:
-        print(f"图片下载失败 ({e})，使用纯色背景替代")
-        # 如果依然下载失败，生成一张灰色背景保底，防止程序崩溃
-        cover_img = Image.new("RGB", (600, 600), (44, 62, 80))
+        print(f"❌ 图片下载失败! 原因: {e}")
+        cover_img = Image.new("RGB", (1000, 1000), (44, 62, 80))
 
+    # 背景模糊处理 (使用高清图模糊，质感更好)
     bg_img = cover_img.resize((width, width))
     bg_img = bg_img.resize((width, height), Image.Resampling.LANCZOS)
-    bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=30))
+    bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=35))
     
+    # 封面主图居中 (保留 600x600 的大小)
     cover_size = 600
     cover_img_resized = cover_img.resize((cover_size, cover_size), Image.Resampling.LANCZOS)
     
     final_img = Image.new("RGB", (width, height))
     final_img.paste(bg_img, (0, 0))
     
-    mask = Image.new("RGBA", (width, height), (0, 0, 0, 100))
+    # 遮罩层让文字清晰
+    mask = Image.new("RGBA", (width, height), (0, 0, 0, 120))
     final_img.paste(mask, (0, 0), mask)
-    final_img.paste(cover_img_resized, ((width - cover_size) // 2, 200))
+    final_img.paste(cover_img_resized, ((width - cover_size) // 2, 180))
 
     draw = ImageDraw.Draw(final_img)
     try:
@@ -139,9 +129,12 @@ def generate_cover(music):
         x = (width - (bbox[2] - bbox[0])) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    draw_text_center(850, f"《{music['name']}》", font_title, (255, 255, 255))
+    # 欧美歌曲名可能较长，做个简单截断防溢出
+    display_name = music['name'] if len(music['name']) < 18 else music['name'][:16] + "..."
+    
+    draw_text_center(840, f"{display_name}", font_title, (255, 255, 255))
     draw_text_center(930, f"- {music['artist']} -", font_artist, (200, 200, 200))
-    draw_text_center(1100, f"🎵 {date_str} 每日推歌", font_date, (255, 255, 255))
+    draw_text_center(1080, f"🎵 {date_str} Daily Pick", font_date, (255, 255, 255))
 
     final_img.save(img_path, quality=95)
     return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{BRANCH}/outputs/images/{img_filename}"
@@ -159,8 +152,8 @@ def generate_wechat_html(music, img_url, content):
             </h2>
         </section>
         <section style="background-color: #f7f9fa; border-radius: 12px; padding: 20px; margin: 20px 0; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-            <p style="margin: 5px 0; font-size: 17px; color: #2c3e50;"><strong>🎵 歌名：</strong>{music['name']}</p>
-            <p style="margin: 5px 0; font-size: 16px; color: #7f8c8d;"><strong>🎤 歌手：</strong>{music['artist']}</p>
+            <p style="margin: 5px 0; font-size: 17px; color: #2c3e50;"><strong>🎵 Track：</strong>{music['name']}</p>
+            <p style="margin: 5px 0; font-size: 16px; color: #7f8c8d;"><strong>🎤 Artist：</strong>{music['artist']}</p>
         </section>
         <p style="text-align: center; margin: 25px 0;">
             <img src="{img_url}" style="width: 100%; max-width: 500px; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.15);" />
@@ -205,20 +198,16 @@ def save_json(title, img_url, html):
 if __name__ == "__main__":
     clean_weekly()
     
-    # 1. 抓取音乐
     music = get_music_data()
     print(f"🎵 成功获取歌曲: {music['name']} - {music['artist']}")
     
-    # 2. 调用 Gemini 生成标题和文案
     print("🤖 正在呼叫 Gemini 生成文案...")
     ai_title, ai_content = generate_content_with_gemini(music['name'], music['artist'])
     print(f"✨ 标题: {ai_title}")
     
-    # 3. 生成图片
     img_url = generate_cover(music)
     print(f"🖼️ 图片已生成: {img_url}")
     
-    # 4. 生成排版并保存
     html_str = generate_wechat_html(music, img_url, ai_content)
     save_json(ai_title, img_url, html_str)
     print("✅ JSON 与 HTML 更新完成！")
