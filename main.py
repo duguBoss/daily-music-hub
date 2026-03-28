@@ -32,6 +32,13 @@ GEMINI_MODELS = [
 GEMINI_MODEL_RETRIES = max(1, int(os.getenv("GEMINI_MODEL_RETRIES", "2")))
 
 
+def ensure_top_guide_gif(html):
+    normalized = (html or "").strip()
+    if TOP_GIF in normalized:
+        return normalized
+    return f"<img src='{TOP_GIF}' style='width:100%;display:block;margin-bottom:1em;'>" + normalized
+
+
 def normalize_text(value):
     cleaned = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", " ", (value or "").lower())
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -427,7 +434,7 @@ def render_wechat_html(post_copy, songs, covers):
     html_parts.append("</section>")
     html_parts.append(f"<img src='{BOTTOM_GIF}' style='width:100%;display:block;'>")
     html_parts.append("</section>")
-    return "".join(html_parts)
+    return ensure_top_guide_gif("".join(html_parts))
 
 
 def build_default_title(songs):
