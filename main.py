@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 # ================= Configuration =================
 TOP_GIF = "https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzXgUR7FJnf11qGIo8nmKt6RxibXrb5s4RFb9UZ9UOHQy7fqQyI377Licw/0?wx_fmt=gif"
 BOTTOM_GIF = "https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzk57DCmhVC16o9ILH0Tn1YPEiarfLRRQSVFN2mJdeYibGnBPialPIzvojw/0?wx_fmt=gif"
+WECHAT_SIDE_SPACING_PX = 0
 GITHUB_REPO = os.getenv("GITHUB_REPOSITORY", "duguBoss/daily-music-hub")
 BRANCH = "main"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -363,10 +364,13 @@ def render_wechat_html(post_copy, songs, covers):
     song_copies = post_copy.get("songs", [])
 
     html_parts = [
-        "<section style='background-color:#f6f7f9;'>",
+        (
+            f"<section data-side-spacing='{WECHAT_SIDE_SPACING_PX}' "
+            "style='background-color:#f6f7f9;margin:0;padding:0;'>"
+        ),
         f"<img src='{TOP_GIF}' style='width:100%;display:block;'>",
         (
-            "<section style='padding:28px 18px 8px 18px;background-color:#ffffff;"
+            f"<section style='padding:28px {WECHAT_SIDE_SPACING_PX}px 8px {WECHAT_SIDE_SPACING_PX}px;background-color:#ffffff;"
             "font-family:-apple-system,BlinkMacSystemFont,Helvetica Neue,PingFang SC,Hiragino Sans GB,Microsoft YaHei,sans-serif;'>"
         ),
         (
